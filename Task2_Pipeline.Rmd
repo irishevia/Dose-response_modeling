@@ -1,0 +1,250 @@
+---
+title: "Assignment – Adverse Outcome Pathway (AOP) module of the STOP"
+author: "Iris Martínez Hevia"
+date: "May 10th 2024"
+output:
+  html_document:
+    theme: cerulean
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+---
+
+# Introduction
+This technical assignment for the postdoc interview aims to develop a miniaturized pipeline for dose-response modeling in a data set of Lemna minor exposed to different doses of Cobolt-60 gamma radiation.
+
+# References
+Kniss AR, Streibig JC (2018) Statistical Analysis of Agricultural Experiments using R.
+
+Ritz C, Baty F, Streibig JC, Gerhard D. Dose-Response Analysis Using R. PLoS One. 2015 Dec 30;10(12):e0146021. doi: 10.1371/journal.pone.0146021. PMID: 26717316; PMCID: PMC4696819.
+
+Roell K, Koval LE, Boyles R, Patlewicz G, Ring C, Rider CV, Ward-Caviness C, Reif DM, Jaspers I, Fry RC, Rager JE. Development of the InTelligence And Machine LEarning (TAME) Toolkit for Introductory Data Science, Chemical-Biological Analyses, Predictive Modeling, and Database Mining for Environmental Health Research. Front Toxicol. 2022 Jun 22;4:893924. doi: 10.3389/ftox.2022.893924. PMID: 35812168; PMCID: PMC9257219.
+
+# Analysis
+
+## Setup and Data Exploration
+The necessary R packages are installed and loaded to facilitate data analysis. 
+
+### Installing and loading required R packages
+
+```{r message=FALSE, warning=FALSE}
+if (!require("readxl")) install.packages("readxl")
+if (!require("ggplot2")) install.packages("ggplot2")
+if (!require("gridExtra")) install.packages("gridExtra")
+if (!require("dplyr")) install.packages("dplyr")
+if (!require("drc")) install.packages("drc")
+```
+
+### Import libraries
+```{r message=FALSE}
+library(readxl)
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(drc)
+```
+
+### Load data
+The dataset qData_v3.5.xlsx is loaded from the specified file path. File must be located in the working directory.
+```{r}
+qdata <- read_excel("qData_v3.5.xlsx", sheet = "qData")
+```
+
+### Plot dose-response relationship
+Dose-response relationships are visualized through scatterplots. Data is grouped by TARGET and the dose variable (MEAS1_VALUE), with mean and standard deviation of the response variable (MEAS2_VALUE) computed for each group.
+
+```{r fig.height=20, fig.width=15, message=FALSE, warning=FALSE}
+# Group dataset by TARGET and MEAS1_VALUE and compute mean and SD of MEAS2_VALUE
+dose_response <- qdata %>%
+  group_by(TARGET, MEAS1_VALUE) %>%
+  summarise(Mean_MEAS2_VALUE = mean(MEAS2_VALUE),
+            SD_MEAS2_VALUE = sd(MEAS2_VALUE))
+
+plot_dose_response <- function(data) {
+  plots <- lapply(unique(data$TARGET), function(target) {
+    target_data <- data[data$TARGET == target, ]
+    
+    ylab <- unique(qdata[qdata$TARGET == target, "MEAS2_UNIT"])
+    
+    ggplot(target_data, aes(x = MEAS1_VALUE, y = Mean_MEAS2_VALUE)) +
+      geom_point(size = 2, color = "blue4") +  
+      geom_line(linetype = 2) +
+      geom_errorbar(aes(ymin = Mean_MEAS2_VALUE - SD_MEAS2_VALUE, ymax = Mean_MEAS2_VALUE + SD_MEAS2_VALUE), 
+                    width = .2, position = position_dodge(0.05), color = "blue2") +
+      labs(title = target,
+           x = "Dose rate (mGy/h)",
+           y = paste0("Response (", ylab, ")")) +
+      theme_gray() + 
+      theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 18),  
+            axis.title.y = element_text(margin = margin(r = 10)), 
+            axis.text = element_text(size = 12),
+            axis.title = element_text(size = 14, face = "bold"),
+            legend.title = element_text(size = 14, face = "bold"),
+            legend.text = element_text(size = 12, face = "bold"))
+  })
+  
+  # Arrange plots in a grid with better spacing
+  gridExtra::grid.arrange(grobs = plots, ncol = 3, top = "Scatterplots of Dose-Response Relationships", padding = unit(1, "line"))
+}
+# Plot dose-response
+plot_dose_response(dose_response)
+
+```
+
+We can observe that there is a clear relationship between dose and response for all the studied variables.
+
+## Dose-response modeling
+The following pipeline employs the drc package to fit two potential non-linear curve models to the dataset qdata. Specifically, it fits a Log-logistic (LL.3) model with a lower limit at 0 and an Asymptotic regression (AR.2) model, also with a lower limit at 0.
+
+To select the best model, a cross-check is conducted. Initially, a lack-of-goodness-of-fit test is performed, keeping well-fitted model. This step ensures that only robust models are considered for further analysis. Subsequently, if both models pass this initial check, the one with the lowest AIC (Akaike Information Criterion) is selected as the best-fitting model. AIC serves as a criterion for model comparison, balancing goodness of fit with model complexity.
+
+Additionally, the pipeline computes the standard error of the model, providing insights into the reliability of the model estimates. Furthermore, it determines the effective dose at 10% (ED10) using the drc function ED(). 
+
+### Selecting best non-linear model for each target
+Different non-linear models, including LL.3 and AR.2, are tested for each target. The loop iterates through unique targets, fitting models and computing relevant statistics such as AIC and standard errors.
+
+```{r message=FALSE, warning=FALSE}
+# Select different non-linear models to test
+model_list <- list(LL.3 = LL.3(),
+                   AR.2 = AR.2())
+
+# Get unique targets from qdata
+unique_targets <- unique(qdata$TARGET)
+
+# Create output table with summary stats
+out <- data.frame(ID = numeric(),
+                  MODEL = character(),
+                  TARGET = character(),
+                  P = numeric(),
+                  AIC = numeric(),
+                  Total_SE = numeric(),
+                  ED10 = numeric(),
+                  ED10_SE = numeric(),
+                  stringsAsFactors = FALSE)
+
+#Initiate counter
+current <- 0
+print(paste("Fitting models for each target"))
+
+#Run loop
+for(target in unique_targets){
+   #print(paste(round(which(unique_targets %in% target)/length(unique_targets) * 100, 2), " % completed"))
+
+  for (model_name in names(model_list)) {
+    current <- nrow(out) + 1
+    
+    #Select data
+    df <- qdata %>% filter(TARGET == target) 
+    
+    # Fit non-linear models
+    model <- drm(MEAS2_VALUE ~ MEAS1_VALUE, data = df, fct = model_list[[model_name]])
+    total_se <- sqrt(sum(residuals(model)^2) / (length(residuals(model)) - length(coefficients(model))))
+    
+    out[current,"ID"] <- current
+    out[current,"MODEL"] <- model_name
+    out[current,"TARGET"] <- target
+    out[current,"P"] <- as.numeric(modelFit(model)[2, 5])
+    out[current,"AIC"] <- as.numeric(AIC(model))
+    out[current,"Total_SE"] <- total_se
+    out[current,"ED10"] <- as.numeric(ED(model, 10, display = FALSE)[1,1])
+    out[current,"ED10_SE"] <- as.numeric(ED(model, 10, display = FALSE)[1,2])
+  }
+  #Filter by models with good fit
+  out <- out %>%
+    filter(P > 0.01)
+  
+  #Selecting model with the lowest AIC for each target
+  out <- out %>%
+    group_by(TARGET) %>%
+    mutate(best = rank(AIC)) %>%
+    filter(best == 1)
+  
+}
+```
+
+In some cases, it was not possible to find a model that fitted well to the data. We discard those variables from the following analyses.
+```{r}
+#Check with models could not be fitted
+  print(paste("Models could not be fitted to the following targets:", unique_targets[!(unique_targets %in% out$TARGET)]))
+```
+
+The following table contains the summary of the fitted models for the different targets.
+The column code is:
+* MODEL: selected non-linear model
+* TARGET: target analyzed
+* P: P-value for the lack-of-goodness-of-fit test
+* AIC: Akaike Information Criterion value
+* Total_SE: total standard error of the model
+* ED10: Effective dose at 10% (mGy/h)
+* ED10_SE: standard error of ED10
+
+```{r}
+# Results
+knitr::kable(out)
+```
+
+### Visualization of dose-response curves
+Predictions and confidence intervals are generated for each fitted model, and dose-response curves are plotted for visualization.
+
+```{r fig.height=20, fig.width=15, message=FALSE, warning=FALSE}
+# Initialize an empty list to store plots
+plot_list <- list()
+
+# Iterate over each final model
+for (i in 1:nrow(out)){
+  
+  # Filter data for the current target
+  target <- as.character(out[i, "TARGET",])
+  df <- qdata[qdata[,"TARGET"] == target,]
+  
+  if(out[i, "MODEL"] == "LL.3"){model = drm(MEAS2_VALUE ~ MEAS1_VALUE, data = df, fct = LL.3())}
+  if(out[i, "MODEL"] == "AR.2"){model = drm(MEAS2_VALUE ~ MEAS1_VALUE, data = df, fct = AR.2())}
+  
+  # Predictions and confidence intervals for plotting
+  newdata <- data.frame(conc = seq(0.001, 80, length = 100))
+  pm <- predict(model, newdata = newdata, interval = "confidence")
+  newdata$p <- pm[, 1]
+  newdata$pmin <- pm[, 2]
+  newdata$pmax <- pm[, 3]
+  
+  # Plotting the curve
+  plot <- ggplot(df, aes(x = MEAS1_VALUE, y = MEAS2_VALUE)) +
+    geom_point() +
+    geom_ribbon(data = newdata, aes(x = conc, y = p, ymin = pmin, ymax = pmax), alpha = 0.2) +
+    geom_line(data = newdata, aes(x = conc, y = p)) +
+    labs(x = "Dose rate (mGy/h)", y = out[i, "TARGET"], title = out[i, "TARGET"]) + 
+    theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12))
+  
+  # Add the plot to the plot_list
+  plot_list[[i]] <- plot
+}
+
+# Clean working space
+rm(plot, newdata, pm, df)
+
+# Arrange the plots in a grid
+grid.arrange(grobs = plot_list, ncol = 3, top = "Fitted Dose-Response Plots", padding = unit(1, "line"))
+```
+
+## PoD: Effect Dose at 10%
+ED10 is a critical parameter in risk assessment, representing the dose at which a 10% effect level is observed.
+The following plot represents the predicted dose of Cobolt-60 (mGy/h) needed in order to achieve a change in response rate of 10%.
+As observed, for most of the modelled targets, the critical point of departure is around 10 mGy/h of gamma radiation.
+
+```{r fig.width=10, message=FALSE, warning=FALSE, fig.height=12}
+out <- out[order(out$ED10),]
+
+
+ggplot(data = out, aes(x = reorder(TARGET, ED10), y = ED10)) +
+  geom_point(color = "red", size = 9, shape = 16) +
+  theme_light() +
+  scale_y_continuous(limits = c(0, 120), breaks = seq(0, 120, by = 10))+
+   labs(title = "Effective Dose at 10%", x = "", y = "Dose rate (mGy/h)") +  
+  theme(axis.text.x = element_text(size = 18, angle = 45, hjust = 1, vjust = 1, face = "bold"),
+        axis.text.y = element_text(size = 20),
+        axis.title = element_text(size = 24),
+        plot.title = element_text(size = 22, hjust = 0.5, face = "bold"),
+        legend.position = "none")
+
+```
