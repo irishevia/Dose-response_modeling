@@ -1,0 +1,169 @@
+---
+title: "Task 3 – Adverse Outcome Pathway (AOP) module of the STOP"
+author: "Iris Martínez Hevia"
+date: "May 15th 2024"
+output:
+  html_document:
+    theme: cerulean
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+---
+# Introduction
+This Rmarkdown document provides a visualization of an Adverse Outcome Pathway (AOP) network retrieved from the AOP-Wiki using R package for igraph.
+
+##  Installing required R packages
+```{r message=FALSE, warning=FALSE}
+if (!require("jsonlite")) install.packages("jsonlite")
+if (!require("httr")) install.packages("httr")
+if (!require("igraph")) install.packages("igraph")
+```
+
+##  Import libraries
+```{r message=FALSE}
+library(jsonlite)
+library(httr)
+library(igraph)
+```
+
+# Get AOP-wiki data
+## Download of JSON for AOP#386
+```{r}
+#Get response
+response <- httr::GET("https://aopwiki.org/aops/386.json", config = httr::config(ssl_verifypeer = FALSE))
+
+# Extract content from the response
+raw_data <- httr::content(response, as = "text")
+
+# Parse JSON data into an R object
+final_data <- fromJSON(raw_data)
+```
+
+## Extract information and visualization in a network
+Information for events (MIE-molecular event, KE-key event and AO-Adverse outcome) and individual key event relationships (KERs) of AOP#386
+```{r}
+# Extracting relevant information
+events <- rbind(final_data$aop_mies, final_data$aop_kes, final_data$aop_aos)
+knitr::kable(events)
+
+kers <- final_data$relationships
+knitr::kable(kers)
+```
+
+# AOP#386 Network
+This network is constructed using igraph package and a tree layout.
+## Creating a graph object
+```{r}
+# Create a graph object
+g <- graph(edges = c(), directed = TRUE)
+
+# Set nodes for the different events
+event_ids <- events$event_id
+event_labels <- events$event
+event_types <- events$event_type
+event_colors <- ifelse(event_types == "KeyEvent", "dodgerblue", ifelse(event_types == "MolecularInitiatingEvent", "green", "red"))
+
+# Add nodes
+for (i in seq_along(event_ids)) {
+  g <- add_vertices(g, nv = 1, name = event_ids[i], label = event_labels[i],
+                    type = event_types[i], color = event_colors[i])
+}
+
+# Set edges for relationships (KERs)
+ker_ids <- kers$relation
+ker_sources <- kers$upstream_event_id 
+ker_targets <- kers$downstream_event_id
+
+#Add edges
+for (i in seq_along(ker_ids)) {
+  source_id <- as.character(ker_sources[i])
+  target_id <- as.character(ker_targets[i])
+
+    g <- add_edges(g, edges = c(source_id, target_id), color = "black")
+}
+```
+
+## Creating a legend for the different nodes (Events)
+```{r}
+# Create a legend
+# Extracting unique event types and their corresponding colors
+unique_types <- unique(events$event_type)
+type_colors <- ifelse(unique_types == "KeyEvent", "dodgerblue", ifelse(unique_types == "MolecularInitiatingEvent", "green", "red"))
+
+
+legend_labels <- c("KE - Key Event", "MIE - Molecular Event", "AO - Adverse Outcome")
+legend_colors <- type_colors
+legend_text <- paste(legend_labels)
+```
+
+
+## Visualizing the network
+```{r fig.height=12, fig.width=15}
+par(cex.main = 2)
+
+plot.igraph(g, 
+            layout = layout_as_tree(g),
+            vertex.label.cex = 2, 
+            vertex.color = V(g)$color,
+            vertex.size = 35,
+            vertex.frame.color = "white",
+            vertex.label.color = "black",
+            vertex.label.font = 2,
+            edge.arrow.size = 0.3,    
+            edge.color = "black",
+            main = final_data$short_name)
+
+# Add legend
+legend("bottomleft", legend = legend_text, fill = legend_colors, title = "Event Types", cex = 2)
+```
+
+# Integration of predicted PODs
+## Load PoD data and PoD/AOP correspondences table
+```{r}
+# Load PoD
+# The file is avaiable in the output folder of Task2_Assignment GitHub reposity
+POD <- read.csv("/output/Result_Modeling.csv")
+
+# Load correspondences between targets and event types:
+correspondences <- data.frame("POD" = c("Reactive oxygen species", "Photosystem II efficiency",
+                                        "Net photosynthetic rate", "Size", "Growth rate"),
+                              "Event" = c("Increased, Reactive oxygen species", "Decrease, Photosystem II efficiency",
+                                          "Decrease, Photosynthesis", "Decrease, Reproduction",
+                                          "Decrease, Population growth rate"))
+```
+
+```{r}
+# Merge the tables for creating the scheme for the network labels
+colnames(POD)[3] <- "POD"
+correspondences <- merge(correspondences, POD[,c("POD", "ED10")], by = "POD")
+correspondences$ED10_round <- round(correspondences$ED10, 1)
+
+knitr::kable(correspondences)
+```
+
+## Visualize final AOP network
+```{r fig.height=12, fig.width=15}
+par(cex.main = 2)
+
+plot.igraph(g, 
+            layout = layout_as_tree(g),
+            vertex.label.cex = 2, 
+            vertex.color = V(g)$color,
+            vertex.size = 35,
+            vertex.frame.color = "white",
+            vertex.label.color = "black",
+            vertex.label.font = 2,
+            edge.arrow.size = 0.3,    
+            edge.color = "black",
+            main = final_data$short_name)
+
+# Add legend
+legend("bottomleft", legend = legend_text, fill = legend_colors, title = "Event Types", cex = 2)
+
+# Add labels of different PoD to the AOP network
+text(1, 0.4, paste("PoD for", correspondences[1,"POD"],"=", correspondences[1,"ED10_round"], "mGy/h"), cex = 1.5)
+text(1, 0.90, paste("PoD for", correspondences[2,"POD"],"=", correspondences[2,"ED10_round"], "mGy/h"), cex = 1.5)
+text(-1, 0.4, paste("PoD for", correspondences[3,"POD"],"=", correspondences[3,"ED10_round"], "mGy/h"), cex = 1.5)
+text(1, -1.1, paste("PoD for", correspondences[4,"POD"],"=", correspondences[4,"ED10_round"], "mGy/h"), cex = 1.5)
+```
