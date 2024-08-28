@@ -1,5 +1,5 @@
 ---
-title: "Assignment – Adverse Outcome Pathway (AOP) module of the STOP"
+title: "Adverse Outcome Pathway (AOP) module of the STOP"
 author: "Iris Martínez Hevia"
 date: "May 10th 2024"
 output:
@@ -12,7 +12,7 @@ output:
 ---
 
 # Introduction
-This technical assignment for the postdoc interview aims to develop a miniaturized pipeline for dose-response modeling in a data set of Lemna minor exposed to different doses of Cobolt-60 gamma radiation.
+This technical assignment aims to develop a miniaturized pipeline for dose-response modeling in a data set of Lemna minor exposed to different doses of Cobolt-60 gamma radiation.
 
 # References
 Kniss AR, Streibig JC (2018) Statistical Analysis of Agricultural Experiments using R.
