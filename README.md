@@ -1,7 +1,7 @@
 # Task2_Assignment
 
-This repository contains an RMarkdown file for performing data analysis on the Assignment: Adverse Outcome Pathway (AOP) module of the STOP.
-The analysis explores 2 of the 3 proposed subtasks:
+This repository contains an RMarkdown file for performing data analysis on the dataset: Adverse Outcome Pathway (AOP) module of the STOP.
+The analysis explores 2 subtasks:
 * Dose-response (d-r) modeling
 * Identify the most relevant point of departure (POD)
 
